@@ -6,7 +6,7 @@ from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from db import get_user_balance, update_user_balance, add_transaction  # функции, которые добавим в db.py
+from db import get_user_balance, update_user_balance,  # функции, которые добавим в db.py
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -186,3 +186,4 @@ async def cmd_daily(message: Message):
     # else:
     #     await message.answer("Вы уже получали бонус сегодня. Приходите завтра.")
     await message.answer("Ежедневный бонус временно не работает.")
+
