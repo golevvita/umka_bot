@@ -1,7 +1,7 @@
 from aiogram import Router, types
 from aiogram.filters import Command
 from aiogram.types import Message
-from database import (
+from db import (
     get_all_items, get_item, buy_item, get_inventory,
     add_item, update_item, delete_item, get_user
 )
@@ -194,4 +194,5 @@ async def cmd_removeitem(message: Message):
         return
 
     await delete_item(item_id)
+
     await message.answer(f"✅ Товар ID {item_id} удалён (если существовал).")
