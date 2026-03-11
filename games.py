@@ -1,221 +1,188 @@
 import random
+import logging
 from aiogram import Router, types
 from aiogram.filters import Command
+from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message
 
-from database import get_user, update_balance, can_claim_daily, update_last_daily
+from db import get_user_balance, update_user_balance, add_transaction  # функции, которые добавим в db.py
 
 router = Router()
+logger = logging.getLogger(__name__)
 
-# ---------- Состояния для игр ----------
+# Состояния для игр (FSM)
 class GuessGame(StatesGroup):
     waiting_for_bet = State()
     waiting_for_number = State()
 
-class CoinGame(StatesGroup):
-    waiting_for_bet = State()
-    waiting_for_choice = State()   # выбор: орёл или решка
-
 class RPSGame(StatesGroup):
     waiting_for_bet = State()
-    waiting_for_choice = State()   # камень, ножницы, бумага
+    waiting_for_choice = State()
 
-class DiceGame(StatesGroup):
-    waiting_for_bet = State()
-    waiting_for_number = State()   # число от 1 до 6
-
-# ---------- Вспомогательная функция для проверки баланса и ставки ----------
-async def process_bet_common(message: Message, state: FSMContext, next_state, game_name: str):
-    """Общая логика для первого шага игр: проверка ставки и баланса."""
-    try:
-        bet = float(message.text)
-    except ValueError:
-        await message.answer("❌ Пожалуйста, введите число (например, 10).")
-        return
-
-    if bet <= 0:
-        await message.answer("❌ Ставка должна быть положительной.")
-        return
-
-    user_id = message.from_user.id
-    user = await get_user(user_id)
-    if not user:
-        await message.answer("❌ Сначала введите /start, чтобы зарегистрироваться.")
-        return
-
-    if user['balance'] < bet:
-        await message.answer(f"❌ Недостаточно средств. Твой баланс: {user['balance']:.2f}")
-        await state.clear()
-        return
-
-    # Сохраняем ставку и переходим к следующему шагу
-    await state.update_data(bet=bet)
-    await state.set_state(next_state)
-
-# ---------- ИГРА 1: Угадай число (уже есть) ----------
+# Игра "Угадай число"
 @router.message(Command("guess"))
 async def cmd_guess(message: Message, state: FSMContext):
-    await message.answer("🎲 Игра «Угадай число» (1–10)!\nВведите ставку:")
+    await message.answer("Введите ставку (количество монет):")
     await state.set_state(GuessGame.waiting_for_bet)
 
 @router.message(GuessGame.waiting_for_bet)
 async def process_guess_bet(message: Message, state: FSMContext):
-    await process_bet_common(message, state, GuessGame.waiting_for_number, "guess")
+    try:
+        bet = float(message.text)
+        if bet <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("Ставка должна быть положительным числом. Попробуйте ещё раз или отмените командой /cancel.")
+        return
+
+    user_id = message.from_user.id
+    balance = await get_user_balance(user_id)
+    if balance < bet:
+        await message.answer(f"Недостаточно средств. Ваш баланс: {balance} монет.")
+        await state.clear()
+        return
+
+    # Замораживаем ставку (списываем)
+    await update_user_balance(user_id, -bet)
+    await state.update_data(bet=bet)
+
+    await message.answer("Я загадал число от 1 до 10. Введите ваш вариант:")
+    await state.set_state(GuessGame.waiting_for_number)
 
 @router.message(GuessGame.waiting_for_number)
 async def process_guess_number(message: Message, state: FSMContext):
     try:
         guess = int(message.text)
+        if not 1 <= guess <= 10:
+            raise ValueError
     except ValueError:
-        await message.answer("❌ Введите целое число от 1 до 10.")
-        return
-
-    if guess < 1 or guess > 10:
-        await message.answer("❌ Число должно быть от 1 до 10.")
+        await message.answer("Введите целое число от 1 до 10.")
         return
 
     data = await state.get_data()
     bet = data['bet']
     secret = random.randint(1, 10)
-    user_id = message.from_user.id
-
     if guess == secret:
         win = bet * 2
-        await update_balance(user_id, win)
-        await message.answer(f"🎉 Поздравляю! Ты угадал число {secret}.\nТы выиграл {win:.2f} монет!")
+        await update_user_balance(message.from_user.id, win)
+        await message.answer(f"🎉 Угадал! Было {secret}. Вы выиграли {win} монет!")
     else:
-        await update_balance(user_id, -bet)
-        await message.answer(f"😞 Не угадал. Я загадал {secret}. Ты потерял {bet:.2f} монет.")
+        await message.answer(f"Не угадал! Было {secret}. Вы проиграли {bet} монет.")
+
     await state.clear()
 
-# ---------- ИГРА 2: Орёл или решка ----------
-@router.message(Command("coin"))
-async def cmd_coin(message: Message, state: FSMContext):
-    await message.answer("🪙 Игра «Орёл или решка»!\nВведите ставку:")
-    await state.set_state(CoinGame.waiting_for_bet)
-
-@router.message(CoinGame.waiting_for_bet)
-async def process_coin_bet(message: Message, state: FSMContext):
-    await process_bet_common(message, state, CoinGame.waiting_for_choice, "coin")
-
-@router.message(CoinGame.waiting_for_choice)
-async def process_coin_choice(message: Message, state: FSMContext):
-    choice = message.text.lower().strip()
-    if choice not in ['орёл', 'орел', 'решка']:
-        await message.answer("❌ Напиши «орёл» или «решка».")
-        return
-
-    data = await state.get_data()
-    bet = data['bet']
-    user_id = message.from_user.id
-
-    # Приводим к каноничному виду
-    if choice in ['орёл', 'орел']:
-        user_choice = 'орёл'
+# Игра "Кубик"
+@router.message(Command("dice"))
+async def cmd_dice(message: Message):
+    # Простой вариант без ставки: бросаем кубик через Telegram
+    # Можно добавить ставку, но пока упростим
+    dice = await message.answer_dice(emoji="🎲")
+    # Здесь можно обработать результат, но пока просто выводим
+    # Для простоты можно добавить небольшую награду случайно
+    if dice.dice.value == 6:
+        reward = 10
+        await update_user_balance(message.from_user.id, reward)
+        await message.answer(f"🎲 Вам выпало 6! Вы получили {reward} монет.")
     else:
-        user_choice = 'решка'
+        await message.answer(f"🎲 Вам выпало {dice.dice.value}. Повезёт в следующий раз!")
 
-    coin = random.choice(['орёл', 'решка'])
-    if user_choice == coin:
-        win = bet * 2
-        await update_balance(user_id, win)
-        await message.answer(f"🪙 Выпал {coin}! Ты выиграл {win:.2f} монет!")
-    else:
-        await update_balance(user_id, -bet)
-        await message.answer(f"🪙 Выпал {coin}. Ты проиграл {bet:.2f} монет.")
-    await state.clear()
-
-# ---------- ИГРА 3: Камень, ножницы, бумага ----------
+# Камень-ножницы-бумага
 @router.message(Command("rps"))
 async def cmd_rps(message: Message, state: FSMContext):
-    await message.answer("✊✌️✋ Камень, ножницы, бумага!\nВведите ставку:")
+    await message.answer("Введите ставку (количество монет):")
     await state.set_state(RPSGame.waiting_for_bet)
 
 @router.message(RPSGame.waiting_for_bet)
 async def process_rps_bet(message: Message, state: FSMContext):
-    await process_bet_common(message, state, RPSGame.waiting_for_choice, "rps")
+    try:
+        bet = float(message.text)
+        if bet <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("Ставка должна быть положительным числом.")
+        return
+
+    user_id = message.from_user.id
+    balance = await get_user_balance(user_id)
+    if balance < bet:
+        await message.answer(f"Недостаточно средств. Баланс: {balance}.")
+        await state.clear()
+        return
+
+    await update_user_balance(user_id, -bet)
+    await state.update_data(bet=bet)
+
+    await message.answer("Выберите: камень 🪨, ножницы ✂️ или бумага 📄 (отправьте слово):")
+    await state.set_state(RPSGame.waiting_for_choice)
 
 @router.message(RPSGame.waiting_for_choice)
 async def process_rps_choice(message: Message, state: FSMContext):
-    choice = message.text.lower().strip()
-    options = {'камень', 'ножницы', 'бумага'}
-    if choice not in options:
-        await message.answer("❌ Выбери: камень, ножницы или бумага.")
+    user_choice = message.text.lower().strip()
+    if user_choice not in ["камень", "ножницы", "бумага"]:
+        await message.answer("Пожалуйста, выберите одно из: камень, ножницы, бумага")
         return
+
+    choices = ["камень", "ножницы", "бумага"]
+    bot_choice = random.choice(choices)
+
+    # Определяем победителя
+    if user_choice == bot_choice:
+        result = "ничья"
+    elif (user_choice == "камень" and bot_choice == "ножницы") or \
+         (user_choice == "ножницы" and bot_choice == "бумага") or \
+         (user_choice == "бумага" and bot_choice == "камень"):
+        result = "вы выиграли"
+    else:
+        result = "вы проиграли"
 
     data = await state.get_data()
     bet = data['bet']
     user_id = message.from_user.id
 
-    bot_choice = random.choice(list(options))
-    # Определяем результат
-    if choice == bot_choice:
-        result = "Ничья"
-        win = bet  # возвращаем ставку (не списываем)
-        await update_balance(user_id, 0)  # ничего не меняем, просто для логики
-        await message.answer(f"🤝 Ничья! Оба выбрали {choice}. Ставка возвращена.")
-    elif (choice == 'камень' and bot_choice == 'ножницы') or \
-         (choice == 'ножницы' and bot_choice == 'бумага') or \
-         (choice == 'бумага' and bot_choice == 'камень'):
+    if result == "вы выиграли":
         win = bet * 2
-        await update_balance(user_id, win)
-        await message.answer(f"🎉 Ты выиграл! {choice} побеждает {bot_choice}. Выигрыш: {win:.2f} монет!")
+        await update_user_balance(user_id, win)
+        await message.answer(f"Бот выбрал {bot_choice}. {result}! Вы получаете {win} монет.")
+    elif result == "ничья":
+        await update_user_balance(user_id, bet)  # возвращаем ставку
+        await message.answer(f"Бот выбрал {bot_choice}. Ничья! Ставка возвращена.")
     else:
-        await update_balance(user_id, -bet)
-        await message.answer(f"😞 Ты проиграл! {bot_choice} побеждает {choice}. Потеряно {bet:.2f} монет.")
+        await message.answer(f"Бот выбрал {bot_choice}. {result}. Вы проиграли {bet} монет.")
+
     await state.clear()
 
-# ---------- ИГРА 4: Бросок кубика ----------
-@router.message(Command("dice"))
-async def cmd_dice(message: Message, state: FSMContext):
-    await message.answer("🎲 Игра «Кубик» (угадай число от 1 до 6)!\nВведите ставку:")
-    await state.set_state(DiceGame.waiting_for_bet)
-
-@router.message(DiceGame.waiting_for_bet)
-async def process_dice_bet(message: Message, state: FSMContext):
-    await process_bet_common(message, state, DiceGame.waiting_for_number, "dice")
-
-@router.message(DiceGame.waiting_for_number)
-async def process_dice_number(message: Message, state: FSMContext):
-    try:
-        guess = int(message.text)
-    except ValueError:
-        await message.answer("❌ Введите целое число от 1 до 6.")
-        return
-
-    if guess < 1 or guess > 6:
-        await message.answer("❌ Число должно быть от 1 до 6.")
-        return
-
-    data = await state.get_data()
-    bet = data['bet']
-    roll = random.randint(1, 6)
-    user_id = message.from_user.id
-
-    if guess == roll:
-        win = bet * 6
-        await update_balance(user_id, win)
-        await message.answer(f"🎉 Выпало {roll}! Ты угадал! Выигрыш: {win:.2f} монет!")
+# Игровой автомат (слоты)
+@router.message(Command("slot"))
+async def cmd_slot(message: Message):
+    # Простая реализация: генерируем три случайных эмодзи
+    emojis = ["🍒", "🍋", "🍊", "🍇", "💎", "7️⃣"]
+    result = [random.choice(emojis) for _ in range(3)]
+    text = f"{result[0]} | {result[1]} | {result[2]}"
+    if result[0] == result[1] == result[2]:
+        win = 50
+        await update_user_balance(message.from_user.id, win)
+        text += f"\n🎉 Джекпот! Вы выиграли {win} монет!"
+    elif result[0] == result[1] or result[1] == result[2] or result[0] == result[2]:
+        win = 10
+        await update_user_balance(message.from_user.id, win)
+        text += f"\n🎉 Два в ряд! Вы выиграли {win} монет!"
     else:
-        await update_balance(user_id, -bet)
-        await message.answer(f"😞 Выпало {roll}. Ты проиграл {bet:.2f} монет.")
-    await state.clear()
+        text += "\nПовезёт в следующий раз!"
+    await message.answer(text)
 
-# ---------- ИГРА 5: Ежедневный бонус ----------
+# Ежедневный бонус
 @router.message(Command("daily"))
 async def cmd_daily(message: Message):
+    # Нужно проверять, получал ли пользователь бонус сегодня
+    # Для этого нужно хранить дату последнего получения. Добавим в таблицу users поле last_daily
+    # Пока сделаем заглушку
     user_id = message.from_user.id
-    user = await get_user(user_id)
-    if not user:
-        await message.answer("❌ Сначала введите /start, чтобы зарегистрироваться.")
-        return
-
-    if await can_claim_daily(user_id):
-        bonus = 50  # фиксированная сумма бонуса
-        await update_balance(user_id, bonus)
-        await update_last_daily(user_id)
-        await message.answer(f"🎁 Ежедневный бонус получен! +{bonus} монет.\nВозвращайся через 24 часа!")
-    else:
-        await message.answer("⏳ Ты уже получал бонус сегодня. Приходи через 24 часа.")
+    # Проверка через БД (нужна функция check_daily_bonus)
+    # from db import claim_daily_bonus
+    # bonus = await claim_daily_bonus(user_id)
+    # if bonus:
+    #     await message.answer(f"Вы получили ежедневный бонус: {bonus} монет!")
+    # else:
+    #     await message.answer("Вы уже получали бонус сегодня. Приходите завтра.")
+    await message.answer("Ежедневный бонус временно не работает.")
