@@ -1,24 +1,35 @@
 import aiosqlite
 import os
-from datetime import datetime
 
 DB_PATH = "bot.db"
 
 async def init_db():
-    """Создаёт все необходимые таблицы"""
+    """Создаёт таблицы и добавляет недостающие колонки"""
     async with aiosqlite.connect(DB_PATH) as db:
-        # Таблица пользователей (уже была, добавим поле balance, last_daily)
+        # Таблица пользователей
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
                 first_name TEXT,
-                balance REAL DEFAULT 0,
-                last_daily DATE,
                 joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        # Таблица сообщений (без изменений)
+        
+        # Добавляем колонку balance, если её нет
+        try:
+            await db.execute('ALTER TABLE users ADD COLUMN balance REAL DEFAULT 0')
+        except aiosqlite.OperationalError:
+            # колонка уже существует
+            pass
+        
+        # Добавляем колонку last_daily, если её нет
+        try:
+            await db.execute('ALTER TABLE users ADD COLUMN last_daily DATE')
+        except aiosqlite.OperationalError:
+            pass
+
+        # Таблица сообщений
         await db.execute('''
             CREATE TABLE IF NOT EXISTS message_counts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,6 +40,7 @@ async def init_db():
                 UNIQUE(user_id, chat_id, date)
             )
         ''')
+
         # Таблица товаров
         await db.execute('''
             CREATE TABLE IF NOT EXISTS items (
@@ -36,10 +48,11 @@ async def init_db():
                 name TEXT UNIQUE,
                 description TEXT,
                 price REAL,
-                stock INTEGER DEFAULT -1,  -- -1 бесконечно
+                stock INTEGER DEFAULT -1,
                 emoji TEXT DEFAULT '📦'
             )
         ''')
+
         # Таблица инвентаря
         await db.execute('''
             CREATE TABLE IF NOT EXISTS inventory (
@@ -51,17 +64,19 @@ async def init_db():
                 UNIQUE(user_id, item_id)
             )
         ''')
-        # Таблица транзакций (для истории)
+
+        # Таблица транзакций
         await db.execute('''
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 from_user INTEGER,
                 to_user INTEGER,
                 amount REAL,
-                type TEXT,  -- 'transfer', 'game', 'purchase', 'bonus'
+                type TEXT,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
         await db.commit()
 
 # ---------- Функции для пользователей и баланса ----------
@@ -94,6 +109,29 @@ async def get_top_balance(limit: int = 10):
             ORDER BY balance DESC
             LIMIT ?
         ''', (limit,))
+        rows = await cursor.fetchall()
+        return rows
+
+# ---------- Функции для сообщений (старые) ----------
+async def increment_message_count(user_id: int, chat_id: int, date: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT INTO message_counts (user_id, chat_id, date, count)
+            VALUES (?, ?, ?, 1)
+            ON CONFLICT(user_id, chat_id, date) DO UPDATE SET count = count + 1
+        ''', (user_id, chat_id, date))
+        await db.commit()
+
+async def get_top_users(chat_id: int, since_date: str, limit: int = 10):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute('''
+            SELECT user_id, SUM(count) as total
+            FROM message_counts
+            WHERE chat_id = ? AND date >= ?
+            GROUP BY user_id
+            ORDER BY total DESC
+            LIMIT ?
+        ''', (chat_id, since_date, limit))
         rows = await cursor.fetchall()
         return rows
 
@@ -149,7 +187,6 @@ async def get_inventory(user_id: int):
         rows = await cursor.fetchall()
         return [dict(zip(['name','emoji','quantity'], row)) for row in rows]
 
-# Админские функции (добавление предметов)
 async def add_item_to_db(name: str, description: str, price: float, emoji: str = '📦', stock: int = -1):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
@@ -157,28 +194,3 @@ async def add_item_to_db(name: str, description: str, price: float, emoji: str =
             VALUES (?, ?, ?, ?, ?)
         ''', (name, description, price, emoji, stock))
         await db.commit()
-
-async def increment_message_count(user_id: int, chat_id: int, date: str):
-    """Увеличивает счётчик сообщений для пользователя в конкретном чате за указанную дату"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('''
-            INSERT INTO message_counts (user_id, chat_id, date, count)
-            VALUES (?, ?, ?, 1)
-            ON CONFLICT(user_id, chat_id, date) DO UPDATE SET count = count + 1
-        ''', (user_id, chat_id, date))
-        await db.commit()
-
-async def get_top_users(chat_id: int, since_date: str, limit: int = 10):
-    """Возвращает список (user_id, total_count) за период начиная с since_date"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute('''
-            SELECT user_id, SUM(count) as total
-            FROM message_counts
-            WHERE chat_id = ? AND date >= ?
-            GROUP BY user_id
-            ORDER BY total DESC
-            LIMIT ?
-        ''', (chat_id, since_date, limit))
-        rows = await cursor.fetchall()
-
-        return rows
