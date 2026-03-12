@@ -30,6 +30,8 @@ async def cmd_coin(message: Message):
     await message.answer(f"🪙 Монета показала: {result}!")
 
 # ----------------------------------- Угадай число -----------------------------------
+GUESS_MULTIPLIER = 7  # выигрыш = ставка * 7
+
 @router.message(Command(commands=["guess", "игра"]))
 async def cmd_guess(message: Message, state: FSMContext):
     await message.answer("Введите ставку (количество монет):")
@@ -73,7 +75,7 @@ async def process_guess_number(message: Message, state: FSMContext):
     secret = random.randint(1, 10)
 
     if guess == secret:
-        win = bet * 2
+        win = bet * GUESS_MULTIPLIER
         await update_user_balance(message.from_user.id, win)
         await message.answer(f"🎉 Угадал! Было {secret}. Вы выиграли {win} монет!")
     else:
@@ -82,16 +84,29 @@ async def process_guess_number(message: Message, state: FSMContext):
     await state.clear()
 
 # ----------------------------------- Кубик -----------------------------------
+DICE_BET = 5          # стоимость одного броска
+DICE_WIN = 30         # выигрыш при выпадении 6
+
 @router.message(Command(commands=["dice", "кубик"]))
 async def cmd_dice(message: Message):
+    user_id = message.from_user.id
+    balance = await get_user_balance(user_id)
+
+    if balance < DICE_BET:
+        await message.answer(f"❌ Недостаточно средств. Для игры нужно {DICE_BET} монет. Ваш баланс: {balance}.")
+        return
+
+    # Списываем ставку
+    await update_user_balance(user_id, -DICE_BET)
+
     dice = await message.answer_dice(emoji="🎲")
     value = dice.dice.value
+
     if value == 6:
-        reward = 10
-        await update_user_balance(message.from_user.id, reward)
-        await message.answer(f"🎲 Вам выпало 6! Вы получили {reward} монет.")
+        await update_user_balance(user_id, DICE_WIN)
+        await message.answer(f"🎲 Вам выпало 6! Вы выиграли {DICE_WIN} монет!")
     else:
-        await message.answer(f"🎲 Вам выпало {value}. Повезёт в следующий раз!")
+        await message.answer(f"🎲 Вам выпало {value}. Вы проиграли {DICE_BET} монет.")
 
 # ----------------------------------- Камень-ножницы-бумага -----------------------------------
 @router.message(Command(commands=["rps", "кнб"]))
@@ -169,7 +184,6 @@ async def cmd_slot(message: Message):
         await message.answer(f"❌ Недостаточно средств. Для игры нужно {SLOT_BET} монет. Ваш баланс: {balance}.")
         return
 
-    # Списываем ставку
     await update_user_balance(user_id, -SLOT_BET)
 
     emojis = ["🍒", "🍋", "🍊", "🍇", "💎", "7️⃣"]
@@ -177,12 +191,10 @@ async def cmd_slot(message: Message):
     text = f"{result[0]} | {result[1]} | {result[2]}"
 
     if result[0] == result[1] == result[2]:
-        # Джекпот
         win = 50
         await update_user_balance(user_id, win)
         text += f"\n🎉 Джекпот! Вы выиграли {win} монет!"
     elif result[0] == result[1] or result[1] == result[2] or result[0] == result[2]:
-        # Два в ряд
         win = 20
         await update_user_balance(user_id, win)
         text += f"\n🎉 Два в ряд! Вы выиграли {win} монет!"
@@ -212,6 +224,7 @@ async def cmd_daily(message: Message):
         await db.commit()
 
     await message.answer(f"✅ Вы получили ежедневный бонус: {bonus} монет!")
+
 
 
 
