@@ -7,8 +7,6 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import Message
 from aiogram.exceptions import TelegramAPIError
-from games import router as games_router
-dp.include_router(games_router)
 
 # Импорты из наших модулей
 from db import init_db, get_top_users, add_user, increment_message_count
@@ -19,8 +17,6 @@ from games import router as games_router
 from shop import router as shop_router
 from moderation import router as moderation_router
 from economy import router as economy_router  # если есть отдельно
-# Если у тебя economy.py объединён с shop.py, то можно не импортировать отдельно.
-# Но для ясности я предполагаю, что у тебя есть файл economy.py с командами /balance, /transfer и т.д.
 
 load_dotenv()
 
@@ -36,13 +32,13 @@ dp = Dispatcher()
 # Подключаем middleware (для подсчёта сообщений)
 dp.message.middleware(ActivityMiddleware())
 
-# Подключаем роутеры из других модулей (порядок может быть любым)
+# Подключаем роутеры из других модулей
 dp.include_router(games_router)
 dp.include_router(shop_router)
 dp.include_router(moderation_router)
 dp.include_router(economy_router)
 
-# Команда /start (остаётся в главном файле)
+# Команда /start
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     user = message.from_user
@@ -63,7 +59,7 @@ async def cmd_start(message: Message):
     response_text = f"{WELCOME_TEXT}\n\n{link}"
     await message.answer(response_text)
 
-# Команда /top (тоже остаётся)
+# Команда /top
 @dp.message(Command("top"))
 async def cmd_top(message: Message):
     if message.chat.type not in ['group', 'supergroup']:
@@ -116,4 +112,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
