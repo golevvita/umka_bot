@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from datetime import datetime
 
 from db import get_user_balance, update_user_balance  # функции, которые добавим в db.py
 
@@ -174,17 +175,27 @@ async def cmd_slot(message: Message):
 # Ежедневный бонус
 @router.message(Command("daily"))
 async def cmd_daily(message: Message):
-    # Нужно проверять, получал ли пользователь бонус сегодня
-    # Для этого нужно хранить дату последнего получения. Добавим в таблицу users поле last_daily
-    # Пока сделаем заглушку
     user_id = message.from_user.id
-    # Проверка через БД (нужна функция check_daily_bonus)
-    # from db import claim_daily_bonus
-    # bonus = await claim_daily_bonus(user_id)
-    # if bonus:
-    #     await message.answer(f"Вы получили ежедневный бонус: {bonus} монет!")
-    # else:
-    #     await message.answer("Вы уже получали бонус сегодня. Приходите завтра.")
-    await message.answer("Ежедневный бонус временно не работает.")
+    today = datetime.now().strftime('%Y-%m-%d')
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Проверяем, когда пользователь последний раз получал бонус
+        cursor = await db.execute('SELECT last_daily FROM users WHERE user_id = ?', (user_id,))
+        row = await cursor.fetchone()
+        last_daily = row[0] if row else None
+        
+        if last_daily == today:
+            await message.answer("❌ Вы уже получали бонус сегодня. Приходите завтра!")
+            return
+        
+        # Начисляем бонус (например, 50 монет)
+        bonus = 50
+        await db.execute('''
+            UPDATE users SET balance = balance + ?, last_daily = ? WHERE user_id = ?
+        ''', (bonus, today, user_id))
+        await db.commit()
+        
+    await message.answer(f"✅ Вы получили ежедневный бонус: {bonus} монет!")
+
 
 
