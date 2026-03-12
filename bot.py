@@ -7,6 +7,8 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import Message
 from aiogram.exceptions import TelegramAPIError
+from games import router as games_router
+dp.include_router(games_router)
 
 # Импорты из наших модулей
 from db import init_db, get_top_users, add_user, increment_message_count
@@ -114,3 +116,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
