@@ -14,7 +14,7 @@ from db import get_user_balance, update_user_balance, DB_PATH
 router = Router()
 logger = logging.getLogger(__name__)
 
-# ----------------------------------- Состояния для игр -----------------------------------
+# Состояния для игр
 class GuessGame(StatesGroup):
     waiting_for_bet = State()
     waiting_for_number = State()
@@ -22,6 +22,13 @@ class GuessGame(StatesGroup):
 class RPSGame(StatesGroup):
     waiting_for_bet = State()
     waiting_for_choice = State()
+
+# ----------------------------------- Игра "Орёл и Решка" -----------------------------------
+@router.message(Command("coin"))
+async def cmd_coin(message: Message):
+    # Простейшая версия без ставки, можно усложнить позже
+    result = random.choice(["Орёл", "Решка"])
+    await message.answer(f"🪙 Монета показала: {result}!")
 
 # ----------------------------------- Игра "Угадай число" -----------------------------------
 @router.message(Command("guess"))
@@ -46,7 +53,6 @@ async def process_guess_bet(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    # Замораживаем ставку (списываем)
     await update_user_balance(user_id, -bet)
     await state.update_data(bet=bet)
 
@@ -79,7 +85,6 @@ async def process_guess_number(message: Message, state: FSMContext):
 # ----------------------------------- Игра "Кубик" -----------------------------------
 @router.message(Command("dice"))
 async def cmd_dice(message: Message):
-    # Отправляем анимированный кубик
     dice = await message.answer_dice(emoji="🎲")
     value = dice.dice.value
     if value == 6:
@@ -128,7 +133,6 @@ async def process_rps_choice(message: Message, state: FSMContext):
     choices = ["камень", "ножницы", "бумага"]
     bot_choice = random.choice(choices)
 
-    # Определяем победителя
     if user_choice == bot_choice:
         result = "ничья"
     elif (user_choice == "камень" and bot_choice == "ножницы") or \
@@ -147,14 +151,14 @@ async def process_rps_choice(message: Message, state: FSMContext):
         await update_user_balance(user_id, win)
         await message.answer(f"Бот выбрал {bot_choice}. {result}! Вы получаете {win} монет.")
     elif result == "ничья":
-        await update_user_balance(user_id, bet)  # возвращаем ставку
+        await update_user_balance(user_id, bet)
         await message.answer(f"Бот выбрал {bot_choice}. Ничья! Ставка возвращена.")
     else:
         await message.answer(f"Бот выбрал {bot_choice}. {result}. Вы проиграли {bet} монет.")
 
     await state.clear()
 
-# ----------------------------------- Игровой автомат (слоты) -----------------------------------
+# ----------------------------------- Игровой автомат -----------------------------------
 @router.message(Command("slot"))
 async def cmd_slot(message: Message):
     emojis = ["🍒", "🍋", "🍊", "🍇", "💎", "7️⃣"]
@@ -180,7 +184,6 @@ async def cmd_daily(message: Message):
     today = datetime.now().strftime('%Y-%m-%d')
 
     async with aiosqlite.connect(DB_PATH) as db:
-        # Проверяем, когда пользователь последний раз получал бонус
         cursor = await db.execute('SELECT last_daily FROM users WHERE user_id = ?', (user_id,))
         row = await cursor.fetchone()
         last_daily = row[0] if row else None
@@ -189,14 +192,13 @@ async def cmd_daily(message: Message):
             await message.answer("❌ Вы уже получали бонус сегодня. Приходите завтра!")
             return
 
-        # Начисляем бонус (например, 50 монет)
         bonus = 50
-        await db.execute('''
-            UPDATE users SET balance = balance + ?, last_daily = ? WHERE user_id = ?
-        ''', (bonus, today, user_id))
+        await db.execute('UPDATE users SET balance = balance + ?, last_daily = ? WHERE user_id = ?',
+                         (bonus, today, user_id))
         await db.commit()
 
     await message.answer(f"✅ Вы получили ежедневный бонус: {bonus} монет!")
+
 
 
 
