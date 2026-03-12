@@ -23,15 +23,14 @@ class RPSGame(StatesGroup):
     waiting_for_bet = State()
     waiting_for_choice = State()
 
-# ----------------------------------- Игра "Орёл и Решка" -----------------------------------
-@router.message(Command("coin"))
+# ----------------------------------- Орёл и Решка -----------------------------------
+@router.message(Command(commands=["coin", "монета"]))
 async def cmd_coin(message: Message):
-    # Простейшая версия без ставки, можно усложнить позже
     result = random.choice(["Орёл", "Решка"])
     await message.answer(f"🪙 Монета показала: {result}!")
 
-# ----------------------------------- Игра "Угадай число" -----------------------------------
-@router.message(Command("guess"))
+# ----------------------------------- Угадай число -----------------------------------
+@router.message(Command(commands=["guess", "игра"]))
 async def cmd_guess(message: Message, state: FSMContext):
     await message.answer("Введите ставку (количество монет):")
     await state.set_state(GuessGame.waiting_for_bet)
@@ -82,8 +81,8 @@ async def process_guess_number(message: Message, state: FSMContext):
 
     await state.clear()
 
-# ----------------------------------- Игра "Кубик" -----------------------------------
-@router.message(Command("dice"))
+# ----------------------------------- Кубик -----------------------------------
+@router.message(Command(commands=["dice", "кубик"]))
 async def cmd_dice(message: Message):
     dice = await message.answer_dice(emoji="🎲")
     value = dice.dice.value
@@ -95,7 +94,7 @@ async def cmd_dice(message: Message):
         await message.answer(f"🎲 Вам выпало {value}. Повезёт в следующий раз!")
 
 # ----------------------------------- Камень-ножницы-бумага -----------------------------------
-@router.message(Command("rps"))
+@router.message(Command(commands=["rps", "кнб"]))
 async def cmd_rps(message: Message, state: FSMContext):
     await message.answer("Введите ставку (количество монет):")
     await state.set_state(RPSGame.waiting_for_bet)
@@ -158,27 +157,42 @@ async def process_rps_choice(message: Message, state: FSMContext):
 
     await state.clear()
 
-# ----------------------------------- Игровой автомат -----------------------------------
-@router.message(Command("slot"))
+# ----------------------------------- Игровой автомат (слот) -----------------------------------
+SLOT_BET = 10  # фиксированная ставка за игру
+
+@router.message(Command(commands=["slot", "автомат"]))
 async def cmd_slot(message: Message):
+    user_id = message.from_user.id
+    balance = await get_user_balance(user_id)
+
+    if balance < SLOT_BET:
+        await message.answer(f"❌ Недостаточно средств. Для игры нужно {SLOT_BET} монет. Ваш баланс: {balance}.")
+        return
+
+    # Списываем ставку
+    await update_user_balance(user_id, -SLOT_BET)
+
     emojis = ["🍒", "🍋", "🍊", "🍇", "💎", "7️⃣"]
     result = [random.choice(emojis) for _ in range(3)]
     text = f"{result[0]} | {result[1]} | {result[2]}"
 
     if result[0] == result[1] == result[2]:
+        # Джекпот
         win = 50
-        await update_user_balance(message.from_user.id, win)
+        await update_user_balance(user_id, win)
         text += f"\n🎉 Джекпот! Вы выиграли {win} монет!"
     elif result[0] == result[1] or result[1] == result[2] or result[0] == result[2]:
-        win = 10
-        await update_user_balance(message.from_user.id, win)
+        # Два в ряд
+        win = 20
+        await update_user_balance(user_id, win)
         text += f"\n🎉 Два в ряд! Вы выиграли {win} монет!"
     else:
-        text += "\nПовезёт в следующий раз!"
+        text += f"\n😞 Вы проиграли {SLOT_BET} монет. Повезёт в следующий раз!"
+
     await message.answer(text)
 
 # ----------------------------------- Ежедневный бонус -----------------------------------
-@router.message(Command("daily"))
+@router.message(Command(commands=["daily", "бонус"]))
 async def cmd_daily(message: Message):
     user_id = message.from_user.id
     today = datetime.now().strftime('%Y-%m-%d')
@@ -198,6 +212,7 @@ async def cmd_daily(message: Message):
         await db.commit()
 
     await message.answer(f"✅ Вы получили ежедневный бонус: {bonus} монет!")
+
 
 
 
