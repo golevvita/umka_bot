@@ -9,11 +9,13 @@ logger = logging.getLogger(__name__)
 
 @router.message(Command("guess"))
 async def cmd_guess(message: Message):
-    await message.answer("Тест: команда guess работает!")
+    await message.answer("✅ Команда /guess работает!")
+    print("DEBUG: ответ отправлен")  # это появится в логах Railway
 
 @router.message(Command("dice"))
 async def cmd_dice(message: Message):
     await message.answer("🎲 Бросаем кубик... (тест)")
+
 
 
 
