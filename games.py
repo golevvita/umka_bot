@@ -6,6 +6,9 @@ from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime
+import aiosqlite
+from datetime import datetime
+from db import DB_PATH
 
 from db import get_user_balance, update_user_balance  # функции, которые добавим в db.py
 
@@ -196,6 +199,7 @@ async def cmd_daily(message: Message):
         await db.commit()
         
     await message.answer(f"✅ Вы получили ежедневный бонус: {bonus} монет!")
+
 
 
 
